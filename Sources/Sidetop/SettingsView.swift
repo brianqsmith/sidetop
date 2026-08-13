@@ -11,7 +11,7 @@ final class LaunchAtLoginManager: ObservableObject {
 
     private init() {
         if UserDefaults.standard.object(forKey: "launchAtLogin") == nil {
-            UserDefaults.standard.set(true, forKey: "launchAtLogin")
+            UserDefaults.standard.set(false, forKey: "launchAtLogin")
         }
         enabled = UserDefaults.standard.bool(forKey: "launchAtLogin")
     }
@@ -29,6 +29,7 @@ final class LaunchAtLoginManager: ObservableObject {
 
 struct SettingsView: View {
     @ObservedObject private var login = LaunchAtLoginManager.shared
+    @AppStorage("hideDesktopIcons") private var hideDesktopIcons = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -42,6 +43,10 @@ struct SettingsView: View {
             Divider()
             Toggle("Launch Sidetop automatically at login", isOn: $login.enabled)
                 .onChange(of: login.enabled) { _ in login.applyPreferredState() }
+            Toggle("Hide Finder’s Desktop icons while Sidetop runs", isOn: $hideDesktopIcons)
+                .onChange(of: hideDesktopIcons) { hidden in
+                    (NSApp.delegate as? AppDelegate)?.setDesktopIconsHidden(hidden)
+                }
             Label("Touch the right edge for one second to open Sidetop.", systemImage: "cursorarrow.motionlines")
                 .font(.callout).foregroundStyle(.secondary)
             if let error = login.errorMessage {
@@ -50,6 +55,6 @@ struct SettingsView: View {
             Spacer()
         }
         .padding(24)
-        .frame(width: 430, height: 260)
+        .frame(width: 470, height: 290)
     }
 }

@@ -10,8 +10,8 @@ Sidetop tucks the contents of your macOS Desktop into a resizable panel at the r
 - Press Space to preview the selected item with Quick Look.
 - Automatically hides when you click outside the panel.
 - Appears on the display where it was activated and remains anchored to its top-right corner while resizing.
-- Hides Finder's Desktop icons while running and restores the user's previous setting on quit.
-- Launches at login by default, with a toggle in Settings.
+- Can hide Finder's Desktop icons after explicit opt-in and restores the user's previous setting on quit.
+- Can launch at login after the user enables it in Settings.
 - Universal Apple Silicon and Intel build.
 
 ## Install the unsigned build
@@ -25,11 +25,11 @@ Because Sidetop is not signed or notarized, macOS may instead require you to all
 ## Usage
 
 - Click the menu-bar icon to show or hide Sidetop.
-- Right-click the menu-bar icon for Settings and Quit.
+- Right-click the clearly labeled menu-bar control for Settings, Desktop-icon controls, and Quit.
 - Select an item and press Space for Quick Look, Return to open, Delete to move it to Trash, or use Command-C/Command-V/Command-D.
 - Drag an item out to another app or folder. Drag files onto the panel to copy them to the Desktop.
 
-Always quit using Sidetop's menu when possible so the original Finder Desktop-icon preference is restored immediately. If Sidetop is interrupted, it repairs the saved preference the next time it launches.
+Finder's Desktop icons stay visible by default. After confirming the panel and menu-bar control work, enable hiding in Settings or the right-click menu. Sidetop restores the original Finder preference on quit; after an interrupted session, it restores the Desktop and disables hiding before showing its interface.
 
 ## Build locally
 

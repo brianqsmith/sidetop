@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var edgeMonitor: EdgeMonitor!
     private var settingsWindow: NSWindow?
     private var ownsDesktopVisibilityChange = false
+    private let hideDesktopIconsKey = "hideDesktopIcons"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let otherInstances = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "com.brianqsmith.Sidetop")
@@ -20,8 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         NSApp.setActivationPolicy(.accessory)
-        desktopVisibility.hideDesktopIcons()
-        ownsDesktopVisibilityChange = true
+        if desktopVisibility.recoverInterruptedSessionIfNeeded() {
+            UserDefaults.standard.set(false, forKey: hideDesktopIconsKey)
+        }
 
         panelController = SidetopPanelController(model: model)
         edgeMonitor = EdgeMonitor { [weak self] screen in
@@ -30,7 +32,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureStatusItem()
         model.startMonitoring()
         edgeMonitor.start()
-        LaunchAtLoginManager.shared.applyPreferredState()
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.showPanel()
+            if UserDefaults.standard.bool(forKey: self.hideDesktopIconsKey) {
+                self.setDesktopIconsHidden(true)
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -52,18 +61,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.isVisible = true
         guard let button = statusItem.button else { return }
-        button.image = NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: "Sidetop")
+        button.image = NSImage(systemSymbolName: "rectangle.righthalf.inset.filled", accessibilityDescription: "Sidetop")
+            ?? NSImage(systemSymbolName: "sidebar.right", accessibilityDescription: "Sidetop")
         button.image?.isTemplate = true
+        button.imagePosition = .imageLeading
+        button.title = "Sidetop"
+        button.toolTip = "Show or hide Sidetop"
         button.target = self
         button.action = #selector(togglePanel)
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
     }
 
     @objc private func togglePanel() {
-        guard let event = NSApp.currentEvent else { return }
-        if event.type == .rightMouseUp {
+        if NSApp.currentEvent?.type == .rightMouseUp {
             showMenu()
         } else {
             panelController.toggle(on: screenUnderPointer() ?? NSScreen.main)
@@ -72,7 +85,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showMenu() {
         let menu = NSMenu()
-        menu.addItem(withTitle: "Show Sidetop", action: #selector(showPanel), keyEquivalent: "")
+        menu.addItem(withTitle: panelController.isVisible ? "Hide Sidetop" : "Show Sidetop",
+                     action: #selector(togglePanelFromMenu), keyEquivalent: "")
+        let hideIcons = menu.addItem(withTitle: "Hide Desktop Icons",
+                                     action: #selector(toggleDesktopIcons), keyEquivalent: "")
+        hideIcons.state = UserDefaults.standard.bool(forKey: hideDesktopIconsKey) ? .on : .off
+        menu.addItem(withTitle: "Restore Desktop Icons Now",
+                     action: #selector(restoreDesktopIconsNow), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         menu.addItem(.separator())
@@ -86,6 +105,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showPanel() {
         if let screen = screenUnderPointer() ?? NSScreen.main ?? NSScreen.screens.first {
             panelController.show(on: screen)
+        }
+    }
+
+    @objc private func togglePanelFromMenu() {
+        panelController.toggle(on: screenUnderPointer() ?? NSScreen.main)
+    }
+
+    @objc private func toggleDesktopIcons() {
+        let shouldHide = !UserDefaults.standard.bool(forKey: hideDesktopIconsKey)
+        UserDefaults.standard.set(shouldHide, forKey: hideDesktopIconsKey)
+        setDesktopIconsHidden(shouldHide)
+    }
+
+    @objc private func restoreDesktopIconsNow() {
+        UserDefaults.standard.set(false, forKey: hideDesktopIconsKey)
+        if ownsDesktopVisibilityChange {
+            desktopVisibility.restoreDesktopIcons()
+            ownsDesktopVisibilityChange = false
+        } else {
+            desktopVisibility.forceDesktopIconsVisible()
+        }
+    }
+
+    func setDesktopIconsHidden(_ hidden: Bool) {
+        if hidden, !ownsDesktopVisibilityChange {
+            desktopVisibility.hideDesktopIcons()
+            ownsDesktopVisibilityChange = true
+        } else if !hidden, ownsDesktopVisibilityChange {
+            desktopVisibility.restoreDesktopIcons()
+            ownsDesktopVisibilityChange = false
         }
     }
 

@@ -40,7 +40,7 @@ final class SidetopPanelController: NSObject, NSWindowDelegate {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .moveToActiveSpace]
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.minSize = NSSize(width: 320, height: 360)
         panel.contentView = NSHostingView(rootView: SidetopView(model: model,
                                                                close: { [weak self] in self?.hide() },
@@ -60,7 +60,9 @@ final class SidetopPanelController: NSObject, NSWindowDelegate {
         size.height = min(max(size.height, panel.minSize.height), visible.height)
         let origin = NSPoint(x: visible.maxX - size.width, y: visible.maxY - size.height)
         panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
         installEventMonitors()
     }
 

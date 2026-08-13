@@ -17,4 +17,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Sidetop-unsigned-universal
-          path: dist/Sidetop-1.0.0-universal.dmg
+          path: dist/Sidetop-*.dmg

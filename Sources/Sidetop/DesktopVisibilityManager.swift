@@ -6,8 +6,15 @@ final class DesktopVisibilityManager {
     private let explicitValueKey = "desktopIconsSettingWasExplicit"
     private let activeKey = "desktopIconsHiddenBySidetop"
 
+    @discardableResult
+    func recoverInterruptedSessionIfNeeded() -> Bool {
+        guard defaults.bool(forKey: activeKey) else { return false }
+        restoreDesktopIcons()
+        return true
+    }
+
     func hideDesktopIcons() {
-        if defaults.bool(forKey: activeKey) { restoreDesktopIcons() }
+        guard !defaults.bool(forKey: activeKey) else { return }
         let current = readFinderSetting()
         defaults.set(current.value, forKey: storedValueKey)
         defaults.set(current.wasExplicit, forKey: explicitValueKey)
@@ -25,6 +32,12 @@ final class DesktopVisibilityManager {
             restartFinder()
         }
         defaults.set(false, forKey: activeKey)
+    }
+
+    func forceDesktopIconsVisible() {
+        _ = run("/usr/bin/defaults", ["delete", "com.apple.finder", "CreateDesktop"])
+        defaults.set(false, forKey: activeKey)
+        restartFinder()
     }
 
     private func readFinderSetting() -> (value: Bool, wasExplicit: Bool) {
