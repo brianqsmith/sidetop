@@ -1,0 +1,20 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  universal-macos-app:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run tests
+        run: swift test --disable-sandbox
+      - name: Build unsigned universal DMG
+        run: ./scripts/package_dmg.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sidetop-unsigned-universal
+          path: dist/Sidetop-1.0.0-universal.dmg

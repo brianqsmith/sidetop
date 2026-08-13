@@ -1,0 +1,23 @@
+import AppKit
+import Quartz
+
+final class QuickLookController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+    private var previewURL: URL?
+
+    func toggle(url: URL, sourceWindow: NSWindow) {
+        guard let panel = QLPreviewPanel.shared() else { return }
+        if panel.isVisible, previewURL == url {
+            panel.orderOut(nil)
+            return
+        }
+        previewURL = url
+        panel.dataSource = self
+        panel.delegate = self
+        panel.reloadData()
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    func close() { QLPreviewPanel.shared()?.orderOut(nil) }
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { previewURL == nil ? 0 : 1 }
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! { previewURL as NSURL? }
+}
