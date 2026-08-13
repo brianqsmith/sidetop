@@ -11,15 +11,18 @@ final class EdgeMonitor {
     init(handler: @escaping (NSScreen) -> Void) { self.handler = handler }
 
     func start() {
-        timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.samplePointer() }
-        }
-        RunLoop.main.add(timer!, forMode: .common)
+        let timer = Timer(timeInterval: 0.1,
+                          target: self,
+                          selector: #selector(samplePointer),
+                          userInfo: nil,
+                          repeats: true)
+        self.timer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     func stop() { timer?.invalidate(); timer = nil }
 
-    private func samplePointer() {
+    @objc private func samplePointer() {
         let point = NSEvent.mouseLocation
         guard let screen = NSScreen.screens.first(where: { NSMouseInRect(point, $0.frame, false) }),
               abs(point.x - screen.frame.maxX) <= 2.5 else {
