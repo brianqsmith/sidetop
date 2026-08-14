@@ -39,7 +39,7 @@ final class SidetopPanelController: NSObject, NSWindowDelegate {
         let size = NSSize(width: savedWidth > 0 ? savedWidth : 310,
                           height: savedHeight > 0 ? savedHeight : 760)
         panel = SidetopPanel(contentRect: NSRect(origin: .zero, size: size),
-                            styleMask: [.borderless, .resizable, .fullSizeContentView],
+                            styleMask: [.borderless, .resizable, .fullSizeContentView, .nonactivatingPanel],
                             backing: .buffered,
                             defer: false)
         super.init()
@@ -91,7 +91,11 @@ final class SidetopPanelController: NSObject, NSWindowDelegate {
         var hiddenFrame = targetFrame
         hiddenFrame.origin.x = screen.frame.maxX + 8
         panel.setFrame(hiddenFrame, display: false)
-        NSApp.activate(ignoringOtherApps: true)
+        // A menu-bar panel must not activate Sidetop as a full application.
+        // Doing so makes Stage Manager (and some Spaces configurations) hide
+        // the user's current windows while the panel is shown. A
+        // non-activating NSPanel can still become key for keyboard navigation
+        // without disturbing the frontmost app or its windows.
         panel.makeKeyAndOrderFront(nil)
         panel.orderFrontRegardless()
         setScrollbarsVisible(false)
