@@ -154,10 +154,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panelController.hide()
         edgeMonitor.stop()
         model.stopMonitoring()
-        if ownsDesktopVisibilityChange {
-            desktopVisibility.forceDesktopIconsVisible()
-            ownsDesktopVisibilityChange = false
-        }
+        // "Always visible" keeps the process and its menu item alive, so this
+        // is a soft close rather than a real application termination. Keep the
+        // desktop-icon state stable here; toggling it requires Finder to
+        // restart, which makes every open Finder window disappear and reopen.
+        // cleanUp() still restores the original desktop state when the process
+        // genuinely terminates.
         sidetopIsOn = false
     }
 

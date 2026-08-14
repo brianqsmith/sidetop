@@ -16,10 +16,10 @@ final class DesktopVisibilityManager {
     }
 
     func hideDesktopIcons() {
-        if defaults.bool(forKey: activeKey) {
-            setFinderSetting(false)
-            return
-        }
+        // The preference is already applied and owned by this Sidetop
+        // session. Reapplying it would unnecessarily restart Finder and make
+        // all of the user's Finder windows disappear and reopen.
+        if defaults.bool(forKey: activeKey) { return }
         let current = readFinderSetting()
         defaults.set(current.value, forKey: storedValueKey)
         defaults.set(current.wasExplicit, forKey: explicitValueKey)
