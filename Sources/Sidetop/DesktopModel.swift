@@ -7,15 +7,33 @@ import UniformTypeIdentifiers
 final class DesktopModel: ObservableObject {
     @Published private(set) var groups: [DesktopGroup: [DesktopItem]] = [:]
     @Published var selectedURL: URL?
+    @Published private(set) var selectedURLs = Set<URL>()
     @Published var expandedGroups = Set(DesktopGroup.allCases)
+    @Published var expandedFolders = Set<URL>()
+    @Published private(set) var folderContents: [URL: [DesktopItem]] = [:]
 
-    let desktopURL: URL
+    @Published private(set) var desktopURL: URL
+    private let skipsHiddenItems: Bool
     private var directorySource: DispatchSourceFileSystemObject?
     private var directoryDescriptor: Int32 = -1
+    private var defaultsObserver: NSObjectProtocol?
+    private var selectionAnchorURL: URL?
+    private var selectionScope: [DesktopItem]?
 
-    init(desktopURL: URL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]) {
+    init(desktopURL: URL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0],
+         skipsHiddenItems: Bool = true) {
         self.desktopURL = desktopURL
+        self.skipsHiddenItems = skipsHiddenItems
         refresh()
+        defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification,
+                                                                  object: nil,
+                                                                  queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.objectWillChange.send() }
+        }
+    }
+
+    deinit {
+        if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
     }
 
     func startMonitoring() {
@@ -37,23 +55,154 @@ final class DesktopModel: ObservableObject {
         directoryDescriptor = -1
     }
 
+    func setDisplayFolder(_ url: URL) {
+        let folder = url.standardizedFileURL
+        guard folder != desktopURL.standardizedFileURL else { return }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return }
+
+        let wasMonitoring = directorySource != nil
+        stopMonitoring()
+        desktopURL = folder
+        expandedFolders.removeAll()
+        folderContents.removeAll()
+        clearSelection()
+        refresh()
+        if wasMonitoring { startMonitoring() }
+    }
+
     func refresh() {
         let keys: Set<URLResourceKey> = [.isDirectoryKey, .isHiddenKey, .contentTypeKey]
+        let options: FileManager.DirectoryEnumerationOptions = skipsHiddenItems ? [.skipsHiddenFiles] : []
         let urls = (try? FileManager.default.contentsOfDirectory(at: desktopURL,
                                                                  includingPropertiesForKeys: Array(keys),
-                                                                 options: [.skipsHiddenFiles])) ?? []
-        let items = urls.compactMap { url -> DesktopItem? in
-            guard let values = try? url.resourceValues(forKeys: keys), values.isHidden != true else { return nil }
-            return DesktopItem(url: url,
-                               group: DesktopGroup.group(for: url, resourceValues: values),
-                               isDirectory: values.isDirectory == true)
-        }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+                                                                 options: options)) ?? []
+        let items = urls.compactMap(makeItem)
         groups = Dictionary(grouping: items, by: \DesktopItem.group)
-        if let selectedURL, !items.contains(where: { $0.url == selectedURL }) { self.selectedURL = nil }
+        let existingURLs = Set(visibleItems.map(\.url))
+        selectedURLs.formIntersection(existingURLs)
+        if let selectedURL, !existingURLs.contains(selectedURL) {
+            self.selectedURL = selectedURLs.first
+        }
+        if let selectionAnchorURL, !existingURLs.contains(selectionAnchorURL) {
+            self.selectionAnchorURL = self.selectedURL
+        }
     }
 
     func open(_ url: URL) { NSWorkspace.shared.open(url) }
     func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+
+    func openWithApplications(for url: URL) -> [OpenWithApplication] {
+        NSWorkspace.shared.urlsForApplications(toOpen: url)
+            .map { OpenWithApplication(url: $0,
+                                       name: FileManager.default.displayName(atPath: $0.path)) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    func open(_ url: URL, with applicationURL: URL) {
+        NSWorkspace.shared.open([url],
+                                withApplicationAt: applicationURL,
+                                configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    func toggleFolder(_ url: URL) {
+        let key = folderKey(url)
+        if expandedFolders.contains(key) {
+            expandedFolders.remove(key)
+        } else {
+            folderContents[key] = contents(of: url)
+            expandedFolders.insert(key)
+        }
+    }
+
+    func children(of url: URL) -> [DesktopItem] {
+        sorted(folderContents[folderKey(url)] ?? [])
+    }
+
+    func items(in directory: URL) -> [DesktopItem] {
+        contents(of: directory)
+    }
+
+    func isFolderExpanded(_ url: URL) -> Bool { expandedFolders.contains(folderKey(url)) }
+
+    var visibleItems: [DesktopItem] {
+        CategoryOrderManager.shared.order.flatMap { group -> [DesktopItem] in
+            guard expandedGroups.contains(group) else { return [] }
+            return sorted(groups[group] ?? []).flatMap(flattenedItem)
+        }
+    }
+
+    func setSelectionScope(_ items: [DesktopItem]?) {
+        selectionScope = items
+        let validURLs = Set((items ?? visibleItems).map(\.url))
+        selectedURLs.formIntersection(validURLs)
+        if let selectedURL, !validURLs.contains(selectedURL) { clearSelection() }
+    }
+
+    private var selectableItems: [DesktopItem] { selectionScope ?? visibleItems }
+
+    @discardableResult
+    func moveSelection(by offset: Int, extendingRange: Bool = false) -> URL? {
+        let items = selectableItems
+        guard !items.isEmpty else { clearSelection(); return nil }
+        let current = selectedURL.flatMap { selected in items.firstIndex { $0.url == selected } }
+        let next = min(max((current ?? (offset > 0 ? -1 : items.count)) + offset, 0), items.count - 1)
+        if extendingRange, selectedURL != nil {
+            extendSelection(to: items[next].url, in: items)
+        } else {
+            selectOnly(items[next].url)
+        }
+        return selectedURL
+    }
+
+    func select(_ url: URL, extendingRange: Bool) {
+        guard extendingRange, selectedURL != nil else {
+            selectOnly(url)
+            return
+        }
+        extendSelection(to: url, in: selectableItems)
+    }
+
+    private func extendSelection(to url: URL, in items: [DesktopItem]) {
+        let anchor = selectionAnchorURL ?? selectedURL ?? url
+        guard let anchorIndex = items.firstIndex(where: { $0.url == anchor }),
+              let clickedIndex = items.firstIndex(where: { $0.url == url }) else {
+            selectOnly(url)
+            return
+        }
+        let bounds = min(anchorIndex, clickedIndex)...max(anchorIndex, clickedIndex)
+        selectedURLs = Set(bounds.map { items[$0].url })
+        selectedURL = url
+        selectionAnchorURL = anchor
+    }
+
+    func isSelected(_ url: URL) -> Bool { selectedURLs.contains(url) }
+    func dragURLs(for url: URL) -> [URL] {
+        selectedURLs.contains(url) ? Array(selectedURLs) : [url]
+    }
+
+    var selectionCount: Int { selectedURLs.count }
+
+    func item(after url: URL, excluding excludedURLs: Set<URL>) -> URL? {
+        let items = selectableItems
+        guard let index = items.firstIndex(where: { $0.url == url }) else { return nil }
+        let following = items.dropFirst(index + 1).first { !excludedURLs.contains($0.url) }
+        let preceding = items[..<index].reversed().first { !excludedURLs.contains($0.url) }
+        return following?.url ?? preceding?.url
+    }
+
+    private func selectOnly(_ url: URL) {
+        selectedURL = url
+        selectedURLs = [url]
+        selectionAnchorURL = url
+    }
+
+    private func clearSelection() {
+        selectedURL = nil
+        selectedURLs.removeAll()
+        selectionAnchorURL = nil
+    }
 
     func rename(_ url: URL, to proposedName: String? = nil) {
         let newName: String
@@ -76,10 +225,25 @@ final class DesktopModel: ObservableObject {
     }
 
     func delete(_ url: URL) {
-        NSWorkspace.shared.recycle([url]) { [weak self] _, error in
+        let urls = selectedURLs.contains(url) ? Array(selectedURLs) : [url]
+        delete(urls)
+    }
+
+    func deleteSelection(selecting nextURL: URL? = nil) {
+        guard !selectedURLs.isEmpty else { return }
+        delete(Array(selectedURLs), selecting: nextURL)
+    }
+
+    private func delete(_ urls: [URL], selecting nextURL: URL? = nil) {
+        NSWorkspace.shared.recycle(urls) { [weak self] _, error in
             DispatchQueue.main.async {
                 if let error { self?.show(error) }
+                self?.clearSelection()
                 self?.refresh()
+                if let nextURL,
+                   FileManager.default.fileExists(atPath: nextURL.path) {
+                    self?.selectOnly(nextURL)
+                }
             }
         }
     }
@@ -132,6 +296,66 @@ final class DesktopModel: ObservableObject {
             index += 1
         }
         return candidate
+    }
+
+    private func contents(of directory: URL) -> [DesktopItem] {
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isHiddenKey, .contentTypeKey]
+        let options: FileManager.DirectoryEnumerationOptions = skipsHiddenItems ? [.skipsHiddenFiles] : []
+        let urls = (try? FileManager.default.contentsOfDirectory(at: directory,
+                                                                 includingPropertiesForKeys: Array(keys),
+                                                                 options: options)) ?? []
+        return sorted(urls.compactMap(makeItem))
+    }
+
+    private func makeItem(_ url: URL) -> DesktopItem? {
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isHiddenKey, .contentTypeKey]
+        let values = try? url.resourceValues(forKeys: keys)
+        if skipsHiddenItems, values?.isHidden == true || url.lastPathComponent.hasPrefix(".") { return nil }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return nil }
+        let directory = isDirectory.boolValue
+        return DesktopItem(url: url,
+                           group: directory ? .folders : DesktopGroup.group(for: url, resourceValues: values),
+                           isDirectory: directory)
+    }
+
+    private func flattenedItem(_ item: DesktopItem) -> [DesktopItem] {
+        guard item.isDirectory, isFolderExpanded(item.url) else { return [item] }
+        return [item] + children(of: item.url).flatMap(flattenedItem)
+    }
+
+    func sorted(_ items: [DesktopItem]) -> [DesktopItem] {
+        let rawMode = UserDefaults.standard.string(forKey: "itemSortMode") ?? ItemSortMode.name.rawValue
+        let mode = ItemSortMode(rawValue: rawMode) ?? .name
+        return items.sorted { lhs, rhs in
+            switch mode {
+            case .name:
+                return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+            case .kind:
+                let leftKind = kindName(for: lhs)
+                let rightKind = kindName(for: rhs)
+                let comparison = leftKind.localizedStandardCompare(rightKind)
+                return comparison == .orderedSame
+                    ? lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+                    : comparison == .orderedAscending
+            case .dateModified:
+                let leftDate = (try? lhs.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                let rightDate = (try? rhs.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                return leftDate == rightDate
+                    ? lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+                    : leftDate > rightDate
+            }
+        }
+    }
+
+    private func kindName(for item: DesktopItem) -> String {
+        if item.isDirectory { return "Folder" }
+        return (try? item.url.resourceValues(forKeys: [.localizedTypeDescriptionKey]).localizedTypeDescription)
+            ?? item.url.pathExtension.lowercased()
+    }
+
+    private func folderKey(_ url: URL) -> URL {
+        URL(fileURLWithPath: url.standardizedFileURL.path, isDirectory: true)
     }
 
     private func perform(_ work: () throws -> Void) {

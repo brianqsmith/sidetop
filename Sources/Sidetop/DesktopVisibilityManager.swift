@@ -5,6 +5,8 @@ final class DesktopVisibilityManager {
     private let storedValueKey = "desktopIconsWereVisible"
     private let explicitValueKey = "desktopIconsSettingWasExplicit"
     private let activeKey = "desktopIconsHiddenBySidetop"
+    private let finderDomain = "com.apple.finder" as CFString
+    private let createDesktopKey = "CreateDesktop" as CFString
 
     @discardableResult
     func recoverInterruptedSessionIfNeeded() -> Bool {
@@ -14,7 +16,10 @@ final class DesktopVisibilityManager {
     }
 
     func hideDesktopIcons() {
-        guard !defaults.bool(forKey: activeKey) else { return }
+        if defaults.bool(forKey: activeKey) {
+            setFinderSetting(false)
+            return
+        }
         let current = readFinderSetting()
         defaults.set(current.value, forKey: storedValueKey)
         defaults.set(current.wasExplicit, forKey: explicitValueKey)
@@ -28,19 +33,25 @@ final class DesktopVisibilityManager {
         if defaults.bool(forKey: explicitValueKey) {
             setFinderSetting(previous)
         } else {
-            _ = run("/usr/bin/defaults", ["delete", "com.apple.finder", "CreateDesktop"])
+            clearFinderSetting()
             restartFinder()
         }
         defaults.set(false, forKey: activeKey)
     }
 
     func forceDesktopIconsVisible() {
-        _ = run("/usr/bin/defaults", ["delete", "com.apple.finder", "CreateDesktop"])
+        clearFinderSetting()
         defaults.set(false, forKey: activeKey)
         restartFinder()
     }
 
     private func readFinderSetting() -> (value: Bool, wasExplicit: Bool) {
+        if let value = CFPreferencesCopyValue(createDesktopKey,
+                                              finderDomain,
+                                              kCFPreferencesCurrentUser,
+                                              kCFPreferencesAnyHost) as? Bool {
+            return (value, true)
+        }
         let result = run("/usr/bin/defaults", ["read", "com.apple.finder", "CreateDesktop"])
         guard result.status == 0 else { return (true, false) }
         let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -48,12 +59,34 @@ final class DesktopVisibilityManager {
     }
 
     private func setFinderSetting(_ visible: Bool) {
+        CFPreferencesSetValue(createDesktopKey,
+                              visible ? kCFBooleanTrue : kCFBooleanFalse,
+                              finderDomain,
+                              kCFPreferencesCurrentUser,
+                              kCFPreferencesAnyHost)
+        CFPreferencesSynchronize(finderDomain,
+                                 kCFPreferencesCurrentUser,
+                                 kCFPreferencesAnyHost)
+        // Keep the command-line path as a compatibility fallback for macOS
+        // versions that do not immediately persist cross-domain preferences.
         _ = run("/usr/bin/defaults", ["write", "com.apple.finder", "CreateDesktop", "-bool", visible ? "true" : "false"])
         restartFinder()
     }
 
     private func restartFinder() {
         _ = run("/usr/bin/killall", ["Finder"])
+    }
+
+    private func clearFinderSetting() {
+        CFPreferencesSetValue(createDesktopKey,
+                              nil,
+                              finderDomain,
+                              kCFPreferencesCurrentUser,
+                              kCFPreferencesAnyHost)
+        CFPreferencesSynchronize(finderDomain,
+                                 kCFPreferencesCurrentUser,
+                                 kCFPreferencesAnyHost)
+        _ = run("/usr/bin/defaults", ["delete", "com.apple.finder", "CreateDesktop"])
     }
 
     @discardableResult

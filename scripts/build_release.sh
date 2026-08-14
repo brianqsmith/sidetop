@@ -28,8 +28,10 @@ lipo -create \
     -output "$APP_DIR/Contents/MacOS/Sidetop"
 
 cp "$PROJECT_DIR/Assets/Sidetop.icns" "$APP_DIR/Contents/Resources/Sidetop.icns"
+cp -R "$PROJECT_DIR/Assets/CategoryIcons" "$APP_DIR/Contents/Resources/CategoryIcons"
 cp "$PROJECT_DIR/Info.plist" "$APP_DIR/Contents/Info.plist"
 chmod +x "$APP_DIR/Contents/MacOS/Sidetop"
+codesign --force --deep --sign - --identifier com.brianqsmith.Sidetop "$APP_DIR"
 
 echo "Built $APP_DIR"
 lipo -archs "$APP_DIR/Contents/MacOS/Sidetop"

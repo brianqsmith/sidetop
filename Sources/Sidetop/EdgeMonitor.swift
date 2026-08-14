@@ -4,14 +4,13 @@ import AppKit
 final class EdgeMonitor {
     private let handler: (NSScreen) -> Void
     private var timer: Timer?
-    private var enteredAt: Date?
     private weak var enteredScreen: NSScreen?
     private var fired = false
 
     init(handler: @escaping (NSScreen) -> Void) { self.handler = handler }
 
     func start() {
-        let timer = Timer(timeInterval: 0.1,
+        let timer = Timer(timeInterval: 0.03,
                           target: self,
                           selector: #selector(samplePointer),
                           userInfo: nil,
@@ -26,17 +25,15 @@ final class EdgeMonitor {
         let point = NSEvent.mouseLocation
         guard let screen = NSScreen.screens.first(where: { NSMouseInRect(point, $0.frame, false) }),
               abs(point.x - screen.frame.maxX) <= 2.5 else {
-            enteredAt = nil
             enteredScreen = nil
             fired = false
             return
         }
         if enteredScreen !== screen {
             enteredScreen = screen
-            enteredAt = Date()
             fired = false
         }
-        guard !fired, let enteredAt, Date().timeIntervalSince(enteredAt) >= 1 else { return }
+        guard !fired else { return }
         fired = true
         handler(screen)
     }
